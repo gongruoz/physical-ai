@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>手势控制舵机 · MediaPipe</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/x-vision.mjs"
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      background: #0f0f12;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1rem;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem;
+    }
+    .hint {
+      font-size: 0.85rem;
+      color: #71717a;
+      margin-bottom: 1rem;
+    }
+    .view {
+      position: relative;
+      width: min(640px, 100vw);
+      aspect-ratio: 4/3;
+      background: #18181b;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    #video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      pointer-events: none;
+    }
+    /* 后置镜头：不镜像，与小车前方真实景象一致（摄像头装在小车上时左=左、右=右） */
+    .camera-back #video,
+    .camera-back #canvas {
+      transform: none;
+    }
+    .status {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: #27272a;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .status span { color: #a1a1aa; }
+    .status strong { color: #fafafa; margin-left: 0.25rem; }
+    .error { color: #f87171; }
+    .ok { color: #4ade80; }
+    button {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #2563eb; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>手势控制舵机</h1>
+  <p class="hint">食指左右 → 角度(0–180) · 手掌高低 → 速度(慢–快)</p>
+  <div class="view">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="status">
+    <span>手部:</span><strong id="handStatus">等待摄像头…</strong>
+    <span>角度:</span><strong id="angleVal">—</strong>
+    <span>速度:</span><strong id="speedVal">—</strong>
+  </div>
+  <button id="btnStart">开启摄像头与手势</button>
+
+  <script type="module" src="gesture.js"></script>
+</body>
+</html>

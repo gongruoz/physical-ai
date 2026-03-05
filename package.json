@@ -1,0 +1,17 @@
+{
+  "name": "phototaxi",
+  "version": "1.0.0",
+  "description": "Gesture-controlled servo with MediaPipe",
+  "type": "commonjs",
+  "scripts": {
+    "gesture": "node gesture-servo-server.js",
+    "gesture:motors": "TARGET=motors node gesture-servo-server.js",
+    "ai-servo": "node ai-servo.js",
+    "ai-motors": "node ai-motors.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "serialport": "^12.0.0"
+  }
+}
