@@ -5,7 +5,8 @@
  */
 require('dotenv').config();
 const express = require('express');
-const { getMotorSequenceFromSurveillanceDirections } = require('./ai-motors.js');
+// 云端用无原生依赖的版本，避免 Railway 构建 serialport 失败
+const { getMotorSequenceFromSurveillanceDirections } = require('./ai-surveillance-cloud.js');
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));

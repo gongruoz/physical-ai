@@ -1,0 +1,9 @@
+# Railway 使用 Nixpacks 构建，显式指定为 Node 项目，避免 "Error creating build plan with Railpack"
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[start]
+cmd = "npm start"
