@@ -4,10 +4,12 @@
   "description": "Gesture-controlled servo with MediaPipe",
   "type": "commonjs",
   "scripts": {
+    "start": "node api-cloud.js",
     "gesture": "node gesture-servo-server.js",
     "gesture:motors": "TARGET=motors node gesture-servo-server.js",
     "ai-servo": "node ai-servo.js",
-    "ai-motors": "node ai-motors.js"
+    "ai-motors": "node ai-motors.js",
+    "api:cloud": "node api-cloud.js"
   },
   "dependencies": {
     "dotenv": "^16.3.1",

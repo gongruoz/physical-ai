@@ -34,6 +34,17 @@
       color: #71717a;
       margin-bottom: 1rem;
     }
+    .camera-role {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+    }
+    .camera-role span { color: #a1a1aa; }
+    .camera-role label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+    .camera-role input[type="radio"] { accent-color: #3b82f6; }
     .view {
       position: relative;
       width: min(640px, 100vw);
@@ -93,6 +104,11 @@
 <body>
   <h1>手势控制舵机</h1>
   <p class="hint">食指左右 → 角度(0–180) · 手掌高低 → 速度(慢–快)</p>
+  <div id="cameraRoleRow" class="camera-role" style="display: none;">
+    <span>摄像头:</span>
+    <label><input type="radio" name="cameraSource" value="eyesight" checked> 小车眼睛 (Eyesight)</label>
+    <label><input type="radio" name="cameraSource" value="surveillance"> 监控 (Surveillance)</label>
+  </div>
   <div class="view">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>

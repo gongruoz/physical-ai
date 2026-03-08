@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * AI 双轮小车：摄像头装在小车上，根据画面用 AI 规划左右电机指令，通过串口发给 Arduino + L298N
- * 运行: npm run ai-motors
+ * AI 双轮小车：eyesight（小车眼前视野）或 surveillance（外部监控）画面 → AI 规划左右电机 → 串口 Arduino + L298N
+ * 运行: npm run ai-motors（本机用电脑摄像头模拟 eyesight）
  * 串口协议: 每行一个 JSON，{ "left": -1~1, "right": -1~1, "duration": 毫秒 }
  */
 require('dotenv').config();
@@ -57,9 +57,9 @@ async function captureFrameAsDataUrl() {
   });
 }
 
-/** AI：根据小车眼前画面规划左右电机动作序列 */
+/** AI：根据 eyesight（小车眼前视野）规划左右电机动作序列 */
 async function getMotorSequence(imageDataUrl) {
-  const textPrompt = `你是一辆两轮小车的驾驶 AI。摄像头装在小车前方，这张图就是小车「眼前」看到的画面。
+  const textPrompt = `你是一辆两轮小车的驾驶 AI。摄像头装在小车前方，这张图就是小车的 eyesight（眼前视野）。
 
 目标：${userHint}
 
@@ -127,6 +127,161 @@ async function getMotorSequence(imageDataUrl) {
     console.log('[中间量] 本帧收到动作序列:', seq.length, '个', JSON.stringify(seq));
   }
   return seq;
+}
+
+/** AI：根据 surveillance（外部监控摄像头）画面规划左右电机动作序列；目标为让小车朝摄像头方向移动 */
+async function getMotorSequenceFromSurveillance(imageDataUrl) {
+  const textPrompt = `你是一辆两轮小车的驾驶 AI。这张图是**外部监控摄像头**拍到的画面：摄像头固定在某处（例如高处或远处），画面里能看到小车的位置、朝向和周围环境。小车的**唯一目标**是：朝摄像头的方向移动（即朝画面中「镜头/观察者」的方向前进），直到接近摄像头或无法再前进为止。
+
+请根据小车在画面中的位置与朝向，规划一小段左右轮动作，使小车朝摄像头方向移动。输出格式与前述相同。
+
+请按以下格式回复（严格两段）：
+1) 第一行：用一句话说「小车在画面中的位置/朝向，我决定怎么走才能朝摄像头靠近」。
+2) 空一行后，只写一个 JSON 数组，每个元素格式：{ "left": 左轮动力, "right": 右轮动力, "duration": 毫秒 }
+
+- left / right：范围 -1.0 到 1.0。正数=前进，负数=后退。
+- 直行：{"left": 0.7, "right": 0.7, "duration": 500}
+- 左转：{"left": 0.2, "right": 0.8, "duration": 400}
+- 右转：{"left": 0.8, "right": 0.2, "duration": 400}
+- 停车：{"left": 0, "right": 0, "duration": 200}
+
+示例格式：
+小车在画面偏左，车头朝右，我决定先右转再直行以朝摄像头方向靠近。
+[{"left": 0.8, "right": 0.2, "duration": 300}, {"left": 0.6, "right": 0.6, "duration": 500}]
+`;
+
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: imageDataUrl, detail: 'low' },
+            },
+            { type: 'text', text: textPrompt },
+          ],
+        },
+      ],
+      max_tokens: 1200,
+    }),
+  });
+
+  const data = await res.json();
+  const text = (data?.choices?.[0]?.message?.content ?? '').trim();
+
+  if (!text) {
+    const err = data?.error;
+    const finish = data?.choices?.[0]?.finish_reason;
+    const usage = data?.usage;
+    console.log('[中间量] AI 返回空内容。', err ? `API error: ${JSON.stringify(err)}` : '', finish ? `finish_reason: ${finish}` : '', usage ? `tokens: ${JSON.stringify(usage)}` : '');
+    return [];
+  }
+
+  const firstLine = text.split(/\r?\n/)[0]?.trim();
+  if (firstLine && !firstLine.startsWith('[')) {
+    console.log('\n[AI surveillance]', firstLine);
+  } else if (text) {
+    console.log('\n[AI surveillance] 原始回应:', text.slice(0, 300) + (text.length > 300 ? '...' : ''));
+  }
+
+  const seq = parseMotorSequenceFromText(text);
+  if (seq.length > 0) {
+    console.log('[中间量] 本帧 surveillance 动作序列:', seq.length, '个', JSON.stringify(seq));
+  }
+  return seq;
+}
+
+/** AI：surveillance 模式，直接输出「前/后/左/右」指令序列，供 ESP32 HTTP 使用；目标仍是朝摄像头靠近 */
+async function getMotorSequenceFromSurveillanceDirections(imageDataUrl) {
+  const textPrompt = `你是一辆两轮小车的驾驶 AI。这张图是**外部监控摄像头**拍到的画面：摄像头固定在某处，画面里能看到小车的位置、朝向和周围环境。小车的**唯一目标**是：朝摄像头的方向移动（朝画面中镜头的方向前进）。
+
+请根据小车在画面中的位置与朝向，规划一小段动作，只使用四种方向：前进(forward)、后退(back)、左转(left)、右转(right)。输出一个 JSON 数组，每个元素：{ "direction": "forward" 或 "back" 或 "left" 或 "right", "duration": 毫秒 }。
+
+请按以下格式回复（严格两段）：
+1) 第一行：用一句话说「小车在画面中的位置/朝向，我决定怎么走才能朝摄像头靠近」。
+2) 空一行后，只写一个 JSON 数组。例如：[{"direction":"right","duration":300},{"direction":"forward","duration":500}]
+
+- direction 只能是：forward, back, left, right
+- duration：该动作持续毫秒数，建议 200~600
+
+示例格式：
+小车在画面偏左，车头朝右，我决定先右转再直行以朝摄像头靠近。
+[{"direction":"right","duration":300},{"direction":"forward","duration":500}]
+`;
+
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
+            { type: 'text', text: textPrompt },
+          ],
+        },
+      ],
+      max_tokens: 800,
+    }),
+  });
+
+  const data = await res.json();
+  const text = (data?.choices?.[0]?.message?.content ?? '').trim();
+
+  if (!text) {
+    const err = data?.error;
+    const finish = data?.choices?.[0]?.finish_reason;
+    console.log('[中间量] AI 返回空内容。', err ? `API error: ${JSON.stringify(err)}` : '', finish ? `finish_reason: ${finish}` : '');
+    return [];
+  }
+
+  const firstLine = text.split(/\r?\n/)[0]?.trim();
+  if (firstLine && !firstLine.startsWith('[')) {
+    console.log('\n[AI surveillance directions]', firstLine);
+  }
+
+  const seq = parseDirectionSequenceFromText(text);
+  if (seq.length > 0) {
+    console.log('[中间量] 本帧 surveillance 方向序列:', seq.length, '个', JSON.stringify(seq));
+  }
+  return seq;
+}
+
+function parseDirectionSequenceFromText(text) {
+  const jsonStr = text.match(/\[[\s\S]*\]/)?.[0];
+  if (!jsonStr) return [];
+  const normalized = jsonStr.replace(/\b(direction|duration)\s*:/g, '"$1":');
+  const dirMap = { forward: 'forward', back: 'back', left: 'left', right: 'right' };
+  for (const toTry of [normalized, normalized + ']', normalized.replace(/,(\s*)$/, '$1]')]) {
+    try {
+      const arr = JSON.parse(toTry);
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((o) => {
+          const d = (o.direction || o.dir || '').toString().toLowerCase();
+          const dir = dirMap[d] || (d === '前' || d === 'fwd' ? 'forward' : d === '后' ? 'back' : d === '左' ? 'left' : d === '右' ? 'right' : null);
+          const duration = Math.max(0, Math.min(5000, Number(o.duration) || 300));
+          return dir ? { direction: dir, duration } : null;
+        })
+        .filter(Boolean);
+    } catch (_) {
+      continue;
+    }
+  }
+  return [];
 }
 
 /** 从 AI 回复中解析 JSON 数组，兼容单引号、未加引号的 key、截断等 */
@@ -215,10 +370,13 @@ async function main() {
   runMotorsLoop(port);
 }
 
-// 供 gesture 服务器在 TARGET=motors 时复用
+// 供 gesture 服务器在 TARGET=motors 时复用。getMotorSequence = eyesight；getMotorSequenceFromSurveillance = 监控视角(left/right)；getMotorSequenceFromSurveillanceDirections = 监控视角(前/后/左/右)，供 ESP32 HTTP
 module.exports = {
   captureFrameAsDataUrl,
   getMotorSequence,
+  getMotorSequenceFromSurveillance,
+  getMotorSequenceFromSurveillanceDirections,
+  parseDirectionSequenceFromText,
   clamp,
   runMotorsLoop,
 };

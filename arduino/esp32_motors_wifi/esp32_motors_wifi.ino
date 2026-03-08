@@ -54,6 +54,89 @@ document.querySelectorAll('button[data-cmd]').forEach(btn => {
 </html>
 )rawliteral";
 
+// ===== AI 监控页：手机连热点后打开 /ai?api=https://你的云端地址，无需电脑 =====
+const char AI_page[] PROGMEM = R"rawliteral(
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI 监控</title>
+  <style>
+    body{font-family:system-ui,sans-serif;text-align:center;margin:0;padding:16px;background:#111;color:#eee;}
+    h2{margin-bottom:4px;}
+    .hint{color:#888;font-size:14px;margin-bottom:12px;}
+    #video{width:100%;max-width:320px;border-radius:8px;background:#000;}
+    #status{margin:12px 0;min-height:24px;}
+    button{padding:12px 24px;font-size:16px;background:#3b82f6;color:#fff;border:none;border-radius:8px;cursor:pointer;}
+    button:disabled{opacity:0.5;}
+  </style>
+</head>
+<body>
+  <h2>AI 监控</h2>
+  <p class="hint" id="hint">地址后加 ?api=https://你的云端地址</p>
+  <video id="video" autoplay playsinline muted></video>
+  <div id="status"></div>
+  <button id="btn">开启摄像头</button>
+  <script>
+  (function(){
+    var video=document.getElementById('video');
+    var canvas=document.createElement('canvas');
+    var ctx=canvas.getContext('2d');
+    var statusEl=document.getElementById('status');
+    var hint=document.getElementById('hint');
+    var btn=document.getElementById('btn');
+    var apiBase='';
+    var pending=[];
+    var interval=800;
+    function getApi(){
+      var m=location.search.match(/api=([^&]+)/);
+      return m ? decodeURIComponent(m[1]).replace(/\/+$/,'') : '';
+    }
+    function setStatus(s){ statusEl.textContent=s; }
+    function runDirections(dirs){
+      pending.forEach(clearTimeout);
+      pending=[];
+      var t=0;
+      (dirs||[]).forEach(function(a){
+        var d=Math.min(5000,Math.max(0,a.duration||300));
+        pending.push(setTimeout(function(){
+          fetch('/cmd?dir='+encodeURIComponent((a.direction||'stop'))+'&duration='+d).catch(function(){});
+        },t));
+        t+=d;
+      });
+    }
+    function loop(){
+      if(!apiBase||video.readyState<2){ setTimeout(loop,500); return; }
+      canvas.width=video.videoWidth;
+      canvas.height=video.videoHeight;
+      ctx.drawImage(video,0,0);
+      var dataUrl=canvas.toDataURL('image/jpeg',0.65);
+      fetch(apiBase+'/frame',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({image:dataUrl,source:'surveillance'})
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if(d.directions&&d.directions.length){ runDirections(d.directions); }
+        setStatus('已发帧 → AI → 小车');
+      }).catch(function(e){ setStatus('错误: '+e.message); });
+      setTimeout(loop,interval);
+    }
+    btn.onclick=function(){
+      apiBase=getApi();
+      if(!apiBase){ hint.textContent='请在地址后加 ?api=https://你的云端地址'; return; }
+      hint.textContent='';
+      btn.disabled=true;
+      navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:640,height:480}})
+        .then(function(stream){ video.srcObject=stream; video.onloadedmetadata=function(){ video.play(); loop(); }; })
+        .catch(function(e){ setStatus('摄像头错误: '+e.message); btn.disabled=false; });
+    };
+  })();
+  </script>
+</body>
+</html>
+)rawliteral";
+
 // ===== 电机控制 =====
 void stopCar() { digitalWrite(IN1, LOW); digitalWrite(IN2, LOW); digitalWrite(IN3, LOW); digitalWrite(IN4, LOW); }
 void forward() { digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW); digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW); }
@@ -66,6 +149,7 @@ unsigned long motorUntil = 0;
 
 // ===== 路由 =====
 void handleRoot() { server.send_P(200, "text/html", MAIN_page); }
+void handleAi() { server.send_P(200, "text/html", AI_page); }
 void handleCmd() {
   String dir = server.arg("dir");
   String c = server.arg("c");
@@ -102,6 +186,7 @@ void setup() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
   server.on("/", handleRoot);
+  server.on("/ai", handleAi);
   server.on("/cmd", handleCmd);
   server.begin();
   Serial.println("Web server started. 电脑/手机连此热点后: 遥控 http://192.168.4.1  AI用ESP32_HTTP_URL=http://192.168.4.1");

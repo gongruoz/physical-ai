@@ -8,7 +8,7 @@ const HAND_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task';
 const WASM_URL =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
-const MOTORS_FRAME_INTERVAL_MS = 2500; // 手机摄像头每 2.5 秒发一帧给 AI→电机
+const MOTORS_FRAME_INTERVAL_MS = 800; // 手机摄像头每 0.8 秒发一帧给 AI→电机（边看边发、边跑边改）
 
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
@@ -175,6 +175,22 @@ function detectFrame() {
   requestAnimationFrame(detectFrame);
 }
 
+function getCameraSource() {
+  const radio = document.querySelector('input[name="cameraSource"]:checked');
+  return (radio && radio.value === 'surveillance') ? 'surveillance' : 'eyesight';
+}
+
+function setHintByCameraSource() {
+  const hint = document.querySelector('.hint');
+  if (!hint || !isMotorsMode) return;
+  const source = getCameraSource();
+  if (source === 'surveillance') {
+    hint.textContent = '手机固定对准小车；AI 让小车朝摄像头方向移动';
+  } else {
+    hint.textContent = '用手机当小车眼睛，AI 根据眼前画面控制左右轮';
+  }
+}
+
 async function initPageMode() {
   try {
     const r = await fetch('/health');
@@ -182,14 +198,23 @@ async function initPageMode() {
     isMotorsMode = data.target === 'motors';
     if (isMotorsMode) {
       const h1 = document.querySelector('h1');
-      const hint = document.querySelector('.hint');
       if (h1) h1.textContent = '手机摄像头 → AI → 电机';
-      if (hint) hint.textContent = '用手机摄像头当小车眼睛，AI 根据画面控制左右轮';
+      const cameraRoleRow = document.getElementById('cameraRoleRow');
+      if (cameraRoleRow) cameraRoleRow.style.display = 'flex';
+      const viewParam = new URLSearchParams(location.search).get('view');
+      if (viewParam === 'surveillance') {
+        const sur = document.querySelector('input[name="cameraSource"][value="surveillance"]');
+        if (sur) sur.checked = true;
+      }
+      setHintByCameraSource();
       const statusRow = document.querySelector('.status');
       if (statusRow) {
         angleValEl.textContent = '—';
         speedValEl.textContent = '—';
       }
+      document.querySelectorAll('input[name="cameraSource"]').forEach((el) => {
+        el.addEventListener('change', setHintByCameraSource);
+      });
     }
   } catch (e) {
     console.warn('无法获取 /health，按舵机模式运行', e);
@@ -206,10 +231,11 @@ function startMotorsFrameLoop() {
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+    const source = getCameraSource();
     fetch('/frame', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl }),
+      body: JSON.stringify({ image: dataUrl, source }),
     })
       .then((res) => res.json())
       .then((d) => {

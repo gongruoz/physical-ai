@@ -3,3 +3,7 @@ node_modules/
 *.pem
 gesture-key.pem
 gesture-cert.pem
+
+# AprilTag generated assets (script re-downloads PNGs)
+scripts/tag36h11/
+scripts/apriltag_36h11_5x6_a4.pdf

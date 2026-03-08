@@ -48,6 +48,10 @@ let serialPort = null;
 // motors 模式：用手机发来的帧驱动，不占用电脑摄像头
 let motorsActionQueue = [];
 let motorsExecuting = false;
+// ESP32 模式（surveillance + 前/后/左/右）：ESP32_HTTP_URL 存在时使用
+let directionQueue = [];
+let esp32Executing = false;
+const ESP32_HTTP_URL = process.env.ESP32_HTTP_URL?.trim() || '';
 // 等 Arduino 回传后再发下一条，避免发送过快导致串口缓冲被冲掉
 let serialIncomingBuffer = '';
 let waitingForEcho = false;
@@ -117,7 +121,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 手机摄像头→AI→电机：接收前端发来的一帧（data URL），调用 AI 并下发电机指令
+// 手机摄像头→AI→电机：接收前端发来的一帧（data URL）和 source（eyesight | surveillance），调用对应 AI 并下发电机指令
 app.post('/frame', async (req, res) => {
   const isMotors = process.env.TARGET === 'motors';
   if (!isMotors) {
@@ -127,16 +131,28 @@ app.post('/frame', async (req, res) => {
   if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image')) {
     return res.status(400).json({ error: '需要 body.image 为 data:image/...;base64,...' });
   }
+  const source = req.body?.source === 'surveillance' ? 'surveillance' : 'eyesight';
+  const useEsp32 = ESP32_HTTP_URL && source === 'surveillance';
 
-  const { getMotorSequence, clamp } = require('./ai-motors.js');
+  const ai = require('./ai-motors.js');
+  const getSeq = useEsp32
+    ? ai.getMotorSequenceFromSurveillanceDirections
+    : source === 'surveillance'
+      ? ai.getMotorSequenceFromSurveillance
+      : ai.getMotorSequence;
   try {
-    console.log('[中间量] 收到手机一帧，请求 AI（prompt: 我看到了什么，我决定怎么走）...');
-    const seq = await getMotorSequence(imageDataUrl);
-    motorsActionQueue = Array.isArray(seq) ? seq : [];
-    if (motorsActionQueue.length === 0) {
+    console.log(`[中间量] 收到手机一帧 (${source}${useEsp32 ? ', ESP32 方向' : ''})，请求 AI...`);
+    const seq = await getSeq(imageDataUrl);
+    if (Array.isArray(seq) && seq.length === 0) {
       console.log('[中间量] AI 返回空序列');
       return res.json({ ok: true, actions: 0 });
     }
+    if (useEsp32) {
+      directionQueue = seq;
+      if (!esp32Executing) runEsp32Execute();
+      return res.json({ ok: true, actions: directionQueue.length });
+    }
+    motorsActionQueue = seq;
     if (!motorsExecuting) runMotorsExecute();
     res.json({ ok: true, actions: motorsActionQueue.length });
   } catch (err) {
@@ -144,6 +160,21 @@ app.post('/frame', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+function runEsp32Execute() {
+  if (directionQueue.length === 0) {
+    esp32Executing = false;
+    return;
+  }
+  esp32Executing = true;
+  const action = directionQueue.shift();
+  const dir = action.direction || 'forward';
+  const duration = Math.max(0, Math.min(5000, Number(action.duration) || 300));
+  const url = `${ESP32_HTTP_URL.replace(/\/$/, '')}/cmd?dir=${encodeURIComponent(dir)}&duration=${duration}`;
+  console.log(`[执行 ESP32] ${dir} ${duration}ms → ${url}`);
+  fetch(url).catch((err) => console.error('[执行 ESP32] 请求失败:', err.message));
+  setTimeout(runEsp32Execute, duration);
+}
 
 function runMotorsExecute() {
   if (motorsActionQueue.length === 0) {
@@ -191,6 +222,9 @@ async function main() {
   serialPort = await openSerial();
 
   const isMotors = process.env.TARGET === 'motors';
+  if (isMotors && ESP32_HTTP_URL) {
+    console.log('ESP32 模式: surveillance 时使用 前/后/左/右 指令发往', ESP32_HTTP_URL);
+  }
   if (isMotors && serialPort?.isOpen) {
     console.log('串口模式: motors（手机摄像头→AI→电机），用手机打开页面并开启摄像头，帧会发到 POST /frame');
     console.log('若电机不动：请确认 Arduino 已烧录 ai_motors_l298n.ino（双轮 left/right），不是舵机程序');
@@ -211,35 +245,41 @@ async function main() {
       app
     );
     server.listen(PORT, host, () => {
-      console.log(`手势界面: https://localhost:${PORT}`);
+      const ips = getLocalIPs();
+      const scheme = 'https';
+      const addr = ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://<本机IP>:${PORT}`;
+      console.log('');
+      console.log('---');
+      console.log(`  手机打开（同 WiFi）: ${addr}`);
+      console.log('  首次需点「高级」→「继续访问」信任证书');
       if (isMotors) {
-        console.log('当前为 motors 模式：手机摄像头→AI（我看到了什么，我决定怎么走）→ 电机');
-        const ips = getLocalIPs();
-        if (ips.length) ips.forEach((ip) => console.log(`  手机用 https://${ip}:${PORT} 打开并点「开启摄像头」`));
+        console.log('  选「监控 (Surveillance)」+ 开启摄像头 → 小车朝摄像头走');
+        if (ESP32_HTTP_URL) console.log('  ESP32 指令发往:', ESP32_HTTP_URL);
       } else {
-        console.log('手机请用 HTTPS 打开（否则摄像头不可用）:');
-        const ips = getLocalIPs();
-        if (ips.length) ips.forEach((ip) => console.log(`  https://${ip}:${PORT}`));
-        else console.log(`  https://<本机IP>:${PORT}`);
-        console.log('首次打开需点「高级」→「继续访问」信任自签名证书');
-        console.log('用手势控制舵机：食指左右→角度，手掌高低→速度');
+        console.log('  用手势控制舵机：食指左右→角度，手掌高低→速度');
       }
+      console.log('---');
+      console.log(`手势界面: ${scheme}://localhost:${PORT}`);
+      if (ips.length > 1) ips.slice(1).forEach((ip) => console.log(`  或: ${scheme}://${ip}:${PORT}`));
     });
   } else {
     app.listen(PORT, host, () => {
-      console.log(`手势界面: http://localhost:${PORT}`);
+      const ips = getLocalIPs();
+      const scheme = 'http';
+      const addr = ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://<本机IP>:${PORT}`;
+      console.log('');
+      console.log('---');
+      console.log(`  手机打开（同 WiFi）: ${addr}`);
       if (isMotors) {
-        console.log('当前为 motors 模式：手机摄像头→AI（我看到了什么，我决定怎么走）→ 电机');
-        const ips = getLocalIPs();
-        if (ips.length) ips.forEach((ip) => console.log(`  手机用 http://${ip}:${PORT} 打开并点「开启摄像头」`));
+        console.log('  选「监控 (Surveillance)」+ 开启摄像头 → 小车朝摄像头走');
+        if (ESP32_HTTP_URL) console.log('  ESP32 指令发往:', ESP32_HTTP_URL);
       } else {
-        const ips = getLocalIPs();
-        if (ips.length) {
-          console.log('同一 WiFi 下手机可访问（HTTP 下手机摄像头不可用）:');
-          ips.forEach((ip) => console.log(`  http://${ip}:${PORT}`));
-        }
-        console.log('用手势控制舵机：食指左右→角度，手掌高低→速度');
+        console.log('  （HTTP 下手机摄像头不可用，建议用 HTTPS）');
+        console.log('  用手势控制舵机：食指左右→角度，手掌高低→速度');
       }
+      console.log('---');
+      console.log(`手势界面: ${scheme}://localhost:${PORT}`);
+      if (ips.length > 1) ips.slice(1).forEach((ip) => console.log(`  或: ${scheme}://${ip}:${PORT}`));
     });
   }
 }

@@ -1,0 +1,9 @@
+# AprilTag A4 PDF generation
+reportlab>=4.0.0
+Pillow>=10.0.0
+requests>=2.28.0
+
+# AprilTag detection (stage 2)
+numpy>=1.24.0
+opencv-python>=4.8.0
+apriltag>=0.0.16
