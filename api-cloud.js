@@ -20,6 +20,15 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'phototaxi-api-cloud',
+    usage: 'POST /frame with body { image: "data:image/...;base64,...", source: "surveillance" }',
+    health: 'GET /health',
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'phototaxi-api-cloud' });
 });
